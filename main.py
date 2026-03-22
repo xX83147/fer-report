@@ -17,8 +17,11 @@ torch.cuda.manual_seed_all(seed)
 
 
 # ========= 1. 路径 =========
-TRAIN_DIR = r"D:\FER _report\data\train"
-TEST_DIR = r"D:\FER _report\data\test"
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+TRAIN_DIR = BASE_DIR / "data" / "train"
+TEST_DIR = BASE_DIR / "data" / "test"
 
 # ========= 2. 超参数 =========
 BATCH_SIZE = 64
