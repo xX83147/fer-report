@@ -108,6 +108,9 @@ class MediumCNN(nn.Module):
         x = self.features(x)
         x = self.classifier(x)
         return x
+    model = MediumCNN(num_classes=NUM_CLASSES).to(DEVICE)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 # ========= 6. 训练函数 =========
 def train_one_epoch(model, loader, criterion, optimizer, device):
