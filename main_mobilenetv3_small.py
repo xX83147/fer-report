@@ -42,7 +42,6 @@ print("CUDA available:", torch.cuda.is_available())
 
 
 # ========= 3. 数据预处理 =========
-# 这里改成 1 通道输入，并把尺寸从 48x48 放大到 96x96
 train_transform = transforms.Compose([
     transforms.Grayscale(num_output_channels=1),
     transforms.Resize((96, 96)),
@@ -72,21 +71,29 @@ print("训练集大小:", len(train_dataset))
 print("测试集大小:", len(test_dataset))
 
 
-# ========= 5. ResNet18 baseline（改成 1 通道输入） =========
-model = models.resnet18(weights=None)
+# ========= 5. MobileNetV3-Small baseline（改成 1 通道输入） =========
+model = models.mobilenet_v3_small(weights=None)
 
-# 把第一层卷积从 3 通道改成 1 通道
-model.conv1 = nn.Conv2d(
+# 第一层卷积改成 1 通道输入
+# 原来是 model.features[0][0]
+model.features[0][0] = nn.Conv2d(
     in_channels=1,
-    out_channels=64,
-    kernel_size=7,
+    out_channels=16,
+    kernel_size=3,
     stride=2,
-    padding=3,
+    padding=1,
     bias=False
 )
 
-# 把最后的全连接层改成 7 分类
-model.fc = nn.Linear(model.fc.in_features, NUM_CLASSES)
+# 最后分类层改成 7 分类
+# mobilenet_v3_small 的 classifier 一般是:
+# Sequential(
+#   (0): Linear(...)
+#   (1): Hardswish(...)
+#   (2): Dropout(...)
+#   (3): Linear(..., 1000)
+# )
+model.classifier[3] = nn.Linear(model.classifier[3].in_features, NUM_CLASSES)
 
 model = model.to(DEVICE)
 
@@ -166,10 +173,6 @@ best_acc = 0.0
 patience = 5
 no_improve = 0
 
-best_acc = 0.0
-patience = 5
-no_improve = 0
-
 for epoch in range(EPOCHS):
     train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, DEVICE)
     test_loss, test_acc = evaluate(model, test_loader, criterion, DEVICE)
@@ -183,19 +186,19 @@ for epoch in range(EPOCHS):
     print(f"Current LR: {current_lr:.6f}")
 
     history.append({
-    "epoch": epoch + 1,
-    "train_loss": train_loss,
-    "train_acc": train_acc,
-    "test_loss": test_loss,
-    "test_acc": test_acc,
-    "lr": current_lr,
-})
+        "epoch": epoch + 1,
+        "train_loss": train_loss,
+        "train_acc": train_acc,
+        "test_loss": test_loss,
+        "test_acc": test_acc,
+        "lr": current_lr,
+    })
 
     if test_acc > best_acc:
         best_acc = test_acc
         no_improve = 0
-        torch.save(model.state_dict(), "best_model.pth")
-        print("已保存最佳模型到 best_model.pth")
+        torch.save(model.state_dict(), "mobilenetv3_small_best_model.pth")
+        print("已保存最佳模型到 mobilenetv3_small_best_model.pth")
     else:
         no_improve += 1
         print(f"验证集连续 {no_improve} 轮没有提升")
@@ -204,7 +207,7 @@ for epoch in range(EPOCHS):
         print("Early stopping triggered.")
         break
 
-csv_path = RESULTS_DIR / "resnet18_history.csv"
+csv_path = RESULTS_DIR / "mobilenetv3_small_history.csv"
 
 with open(csv_path, mode="w", newline="", encoding="utf-8") as f:
     writer = csv.DictWriter(
@@ -225,12 +228,12 @@ plt.plot(epochs, train_accs, label="Train Acc")
 plt.plot(epochs, test_accs, label="Test Acc")
 plt.xlabel("Epoch")
 plt.ylabel("Accuracy")
-plt.title("ResNet18 Accuracy Curve")
+plt.title("MobileNetV3-Small Accuracy Curve")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
 
-fig_path = FIGURES_DIR / "resnet18_acc_curve.png"
+fig_path = FIGURES_DIR / "mobilenetv3_small_acc_curve.png"
 plt.savefig(fig_path, dpi=300)
 plt.close()
 
