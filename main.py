@@ -1,4 +1,3 @@
-import os
 import random
 from pathlib import Path
 
@@ -7,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms, models
 from tqdm import tqdm
 
 
@@ -37,9 +36,10 @@ print("CUDA available:", torch.cuda.is_available())
 
 
 # ========= 3. 数据预处理 =========
+# 这里改成 1 通道输入，并把尺寸从 48x48 放大到 96x96
 train_transform = transforms.Compose([
     transforms.Grayscale(num_output_channels=1),
-    transforms.Resize((48, 48)),
+    transforms.Resize((96, 96)),
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(10),
     transforms.ToTensor(),
@@ -48,7 +48,7 @@ train_transform = transforms.Compose([
 
 test_transform = transforms.Compose([
     transforms.Grayscale(num_output_channels=1),
-    transforms.Resize((48, 48)),
+    transforms.Resize((96, 96)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.5], std=[0.5])
 ])
@@ -66,56 +66,26 @@ print("训练集大小:", len(train_dataset))
 print("测试集大小:", len(test_dataset))
 
 
-# ========= 5. CNN 模型 =========
-class MediumCNN(nn.Module):
-    def __init__(self, num_classes=7):
-        super().__init__()
+# ========= 5. ResNet18 baseline（改成 1 通道输入） =========
+model = models.resnet18(weights=None)
 
-        self.features = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(2),   # 48 -> 24
+# 把第一层卷积从 3 通道改成 1 通道
+model.conv1 = nn.Conv2d(
+    in_channels=1,
+    out_channels=64,
+    kernel_size=7,
+    stride=2,
+    padding=3,
+    bias=False
+)
 
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(2),   # 24 -> 12
+# 把最后的全连接层改成 7 分类
+model.fc = nn.Linear(model.fc.in_features, NUM_CLASSES)
 
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.MaxPool2d(2),   # 12 -> 6
-        )
-
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(128 * 6 * 6, 512),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, num_classes)
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.classifier(x)
-        return x
+model = model.to(DEVICE)
 
 
-# ========= 6. 实例化模型、损失函数、优化器、调度器 =========
-model = MediumCNN(num_classes=NUM_CLASSES).to(DEVICE)
+# ========= 6. 损失函数、优化器、调度器 =========
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
