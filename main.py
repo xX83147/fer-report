@@ -1,6 +1,7 @@
 import random
 from pathlib import Path
-
+import csv
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -23,6 +24,11 @@ BASE_DIR = Path(__file__).resolve().parent
 TRAIN_DIR = BASE_DIR / "data" / "train"
 TEST_DIR = BASE_DIR / "data" / "test"
 
+RESULTS_DIR = BASE_DIR / "results"
+FIGURES_DIR = BASE_DIR / "figures"
+
+RESULTS_DIR.mkdir(exist_ok=True)
+FIGURES_DIR.mkdir(exist_ok=True)
 
 # ========= 2. 超参数 =========
 BATCH_SIZE = 128
@@ -154,6 +160,12 @@ def evaluate(model, loader, criterion, device):
 
 
 # ========= 9. 开始训练（含 early stopping） =========
+history = []
+
+best_acc = 0.0
+patience = 5
+no_improve = 0
+
 best_acc = 0.0
 patience = 5
 no_improve = 0
@@ -170,6 +182,15 @@ for epoch in range(EPOCHS):
     current_lr = optimizer.param_groups[0]["lr"]
     print(f"Current LR: {current_lr:.6f}")
 
+    history.append({
+    "epoch": epoch + 1,
+    "train_loss": train_loss,
+    "train_acc": train_acc,
+    "test_loss": test_loss,
+    "test_acc": test_acc,
+    "lr": current_lr,
+})
+
     if test_acc > best_acc:
         best_acc = test_acc
         no_improve = 0
@@ -183,4 +204,35 @@ for epoch in range(EPOCHS):
         print("Early stopping triggered.")
         break
 
+csv_path = RESULTS_DIR / "resnet18_history.csv"
+
+with open(csv_path, mode="w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(
+        f,
+        fieldnames=["epoch", "train_loss", "train_acc", "test_loss", "test_acc", "lr"]
+    )
+    writer.writeheader()
+    writer.writerows(history)
+
+print(f"训练历史已保存到: {csv_path}")
+
+epochs = [x["epoch"] for x in history]
+train_accs = [x["train_acc"] for x in history]
+test_accs = [x["test_acc"] for x in history]
+
+plt.figure(figsize=(8, 5))
+plt.plot(epochs, train_accs, label="Train Acc")
+plt.plot(epochs, test_accs, label="Test Acc")
+plt.xlabel("Epoch")
+plt.ylabel("Accuracy")
+plt.title("ResNet18 Accuracy Curve")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+fig_path = FIGURES_DIR / "resnet18_acc_curve.png"
+plt.savefig(fig_path, dpi=300)
+plt.close()
+
+print(f"准确率曲线已保存到: {fig_path}")
 print("训练完成，最佳测试准确率:", best_acc)
