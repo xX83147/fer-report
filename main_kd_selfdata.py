@@ -1,7 +1,5 @@
 import os
 import copy
-import time
-from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -9,7 +7,8 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 
-from torchvision import transforms, models
+from torchvision import transforms, models, datasets
+
 
 # =========================
 # 1. 基本配置
@@ -28,11 +27,14 @@ TEMPERATURE = 4.0
 LAMBDA_KD = 0.7
 LAMBDA_SELF = 0.3
 
-SELF_DATA_DIR = r"D:\FER _report\data\selfdata"
+TRAIN_DIR = "data/train"
+TEST_DIR = "data/test"
+SELF_DATA_DIR = "data/selfdata"
 
-TEACHER_TYPE = "resnet18"   # 可改成 "resnet50"
-TEACHER_CKPT = "resnet18_best_model.pth"   # 如果换 teacher，这里也换
+TEACHER_TYPE = "resnet18"          # 可改成 "resnet50"
+TEACHER_CKPT = "resnet18_best_model.pth"   # 如果换teacher，这里也改
 SAVE_PATH = "mobilenetv3_self_kd_best.pth"
+
 
 # =========================
 # 2. self data 数据集
@@ -41,6 +43,9 @@ class SelfImageDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform
+
+        if not os.path.exists(root_dir):
+            raise ValueError(f"self data 路径不存在: {root_dir}")
 
         exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
         self.image_paths = [
@@ -58,12 +63,13 @@ class SelfImageDataset(Dataset):
 
     def __getitem__(self, idx):
         img_path = self.image_paths[idx]
-        img = Image.open(img_path).convert("L")  # 灰度，和 FER2013 对齐
+        img = Image.open(img_path).convert("L")   # 灰度，与FER2013对齐
 
         if self.transform is not None:
             img = self.transform(img)
 
         return img
+
 
 # =========================
 # 3. teacher / student 模型
@@ -82,7 +88,6 @@ class ResNetTeacher(nn.Module):
         else:
             raise ValueError("backbone 只能是 resnet18 或 resnet50")
 
-        # 改第一层输入通道 3 -> 1
         old_conv = self.backbone.conv1
         self.backbone.conv1 = nn.Conv2d(
             1,
@@ -119,7 +124,6 @@ class MobileNetV3Student(nn.Module):
 
         self.backbone = models.mobilenet_v3_small(weights=None)
 
-        # 改第一层输入通道 3 -> 1
         first_conv = self.backbone.features[0][0]
         self.backbone.features[0][0] = nn.Conv2d(
             1,
@@ -130,7 +134,7 @@ class MobileNetV3Student(nn.Module):
             bias=False
         )
 
-        self.feat_dim = 576  # mobilenet_v3_small 最后一层特征维度
+        self.feat_dim = 576
         self.backbone.classifier[3] = nn.Linear(self.feat_dim, num_classes)
 
     def forward(self, x):
@@ -140,9 +144,9 @@ class MobileNetV3Student(nn.Module):
         logits = self.backbone.classifier(feat)
         return logits, feat
 
+
 # =========================
 # 4. feature 对齐层
-#    因为 student_feat=576, teacher_feat可能=512或2048
 # =========================
 class FeatureProjector(nn.Module):
     def __init__(self, in_dim, out_dim):
@@ -152,6 +156,7 @@ class FeatureProjector(nn.Module):
     def forward(self, x):
         return self.proj(x)
 
+
 # =========================
 # 5. 损失函数
 # =========================
@@ -159,6 +164,7 @@ def kd_loss_fn(student_logits, teacher_logits, T=4.0):
     s_log_prob = F.log_softmax(student_logits / T, dim=1)
     t_prob = F.softmax(teacher_logits / T, dim=1)
     return F.kl_div(s_log_prob, t_prob, reduction="batchmean") * (T * T)
+
 
 # =========================
 # 6. 测试函数
@@ -183,6 +189,7 @@ def evaluate(model, data_loader, criterion):
             total += labels.size(0)
 
     return total_loss / total, correct / total
+
 
 # =========================
 # 7. 训练函数
@@ -213,7 +220,6 @@ def train_student_with_self_kd(
     )
 
     best_acc = 0.0
-    best_state = None
 
     for epoch in range(num_epochs):
         teacher.eval()
@@ -299,18 +305,22 @@ def train_student_with_self_kd(
 
     print(f"\n训练结束，最佳 Test Acc: {best_acc:.4f}")
 
+
 # =========================
 # 8. 主函数
 # =========================
 def main():
     print("Using device:", DEVICE)
 
-    # -------------------------
-    # 你自己已有的 FER2013 transform / loader
-    # 这里先给一个通用版本
-    # 如果你原来的 main_mobilenetv3_small.py 里已有，
-    # 直接把那一套复制过来替换这里即可
-    # -------------------------
+    if not os.path.exists(TRAIN_DIR):
+        raise ValueError(f"TRAIN_DIR 不存在: {TRAIN_DIR}")
+    if not os.path.exists(TEST_DIR):
+        raise ValueError(f"TEST_DIR 不存在: {TEST_DIR}")
+    if not os.path.exists(SELF_DATA_DIR):
+        raise ValueError(f"SELF_DATA_DIR 不存在: {SELF_DATA_DIR}")
+    if not os.path.exists(TEACHER_CKPT):
+        raise ValueError(f"teacher 权重不存在: {TEACHER_CKPT}")
+
     train_transform = transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
         transforms.RandomHorizontalFlip(),
@@ -330,27 +340,23 @@ def main():
         transforms.Normalize(mean=[0.5], std=[0.5]),
     ])
 
-    # ============================================================
-    # 这一段你直接从你现有的 main_mobilenetv3_small.py 复制过来
-    # 只保留 train_loader / test_loader 最终结果就行
-    # ============================================================
-    #
-    # 例如：
-    # train_dataset = ...
-    # test_dataset = ...
-    # train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-    # test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
-    #
-    # ============================================================
+    train_dataset = datasets.ImageFolder(root=TRAIN_DIR, transform=train_transform)
+    test_dataset = datasets.ImageFolder(root=TEST_DIR, transform=test_transform)
 
-train_dataset = datasets.ImageFolder(root=TRAIN_DIR, transform=train_transform)
-test_dataset = datasets.ImageFolder(root=TEST_DIR, transform=test_transform)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=0
+    )
 
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-    # -------------------------
-    # self data loader
-    # -------------------------
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=0
+    )
+
     self_dataset = SelfImageDataset(SELF_DATA_DIR, transform=self_transform)
     self_loader = DataLoader(
         self_dataset,
@@ -360,20 +366,19 @@ test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
         drop_last=False
     )
 
+    print(f"train set 数量: {len(train_dataset)}")
+    print(f"test set 数量: {len(test_dataset)}")
     print(f"self data 图片数量: {len(self_dataset)}")
 
-    # -------------------------
-    # teacher
-    # -------------------------
     teacher = ResNetTeacher(num_classes=NUM_CLASSES, backbone=TEACHER_TYPE).to(DEVICE)
 
     teacher_ckpt = torch.load(TEACHER_CKPT, map_location=DEVICE)
 
-    if "model_state_dict" in teacher_ckpt:
+    if isinstance(teacher_ckpt, dict) and "model_state_dict" in teacher_ckpt:
         teacher.load_state_dict(teacher_ckpt["model_state_dict"])
-    elif "state_dict" in teacher_ckpt:
+    elif isinstance(teacher_ckpt, dict) and "state_dict" in teacher_ckpt:
         teacher.load_state_dict(teacher_ckpt["state_dict"])
-    elif "student" in teacher_ckpt:
+    elif isinstance(teacher_ckpt, dict) and "student" in teacher_ckpt:
         raise ValueError("你传进来的不是 teacher 权重，而是 student 权重。")
     else:
         teacher.load_state_dict(teacher_ckpt)
@@ -382,15 +387,9 @@ test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
     for p in teacher.parameters():
         p.requires_grad = False
 
-    # -------------------------
-    # student + projector
-    # -------------------------
     student = MobileNetV3Student(num_classes=NUM_CLASSES).to(DEVICE)
     projector = FeatureProjector(student.feat_dim, teacher.feat_dim).to(DEVICE)
 
-    # -------------------------
-    # train
-    # -------------------------
     train_student_with_self_kd(
         teacher=teacher,
         student=student,
