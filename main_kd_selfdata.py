@@ -374,14 +374,34 @@ def main():
 
     teacher_ckpt = torch.load(TEACHER_CKPT, map_location=DEVICE)
 
-    if isinstance(teacher_ckpt, dict) and "model_state_dict" in teacher_ckpt:
-        teacher.load_state_dict(teacher_ckpt["model_state_dict"])
-    elif isinstance(teacher_ckpt, dict) and "state_dict" in teacher_ckpt:
-        teacher.load_state_dict(teacher_ckpt["state_dict"])
-    elif isinstance(teacher_ckpt, dict) and "student" in teacher_ckpt:
-        raise ValueError("你传进来的不是 teacher 权重，而是 student 权重。")
+if isinstance(teacher_ckpt, dict) and "model_state_dict" in teacher_ckpt:
+    state_dict = teacher_ckpt["model_state_dict"]
+elif isinstance(teacher_ckpt, dict) and "state_dict" in teacher_ckpt:
+    state_dict = teacher_ckpt["state_dict"]
+elif isinstance(teacher_ckpt, dict) and "student" in teacher_ckpt:
+    raise ValueError("你传进来的不是 teacher 权重，而是 student 权重。")
+else:
+    state_dict = teacher_ckpt
+
+# 如果权重里没有 backbone. 前缀，就自动补上
+new_state_dict = {}
+for k, v in state_dict.items():
+    if k.startswith("backbone."):
+        new_state_dict[k] = v
     else:
-        teacher.load_state_dict(teacher_ckpt)
+        new_state_dict["backbone." + k] = v
+
+# fc 层也要兼容
+if "backbone.fc.weight" in new_state_dict and teacher.backbone.fc.weight.shape != new_state_dict["backbone.fc.weight"].shape:
+    print("检测到 fc 层维度不一致，跳过 fc 权重加载。")
+    new_state_dict.pop("backbone.fc.weight", None)
+    new_state_dict.pop("backbone.fc.bias", None)
+
+missing, unexpected = teacher.load_state_dict(new_state_dict, strict=False)
+
+print("Teacher 权重加载完成。")
+print("Missing keys:", missing)
+print("Unexpected keys:", unexpected)
 
     teacher.eval()
     for p in teacher.parameters():
