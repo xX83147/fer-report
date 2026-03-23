@@ -108,7 +108,7 @@ class MediumCNN(nn.Module):
         x = self.features(x)
         x = self.classifier(x)
         return x
-    model = MediumCNN(num_classes=NUM_CLASSES).to(DEVICE)
+model = MediumCNN(num_classes=NUM_CLASSES).to(DEVICE)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
