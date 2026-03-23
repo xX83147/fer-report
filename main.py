@@ -24,11 +24,13 @@ TRAIN_DIR = BASE_DIR / "data" / "train"
 TEST_DIR = BASE_DIR / "data" / "test"
 
 # ========= 2. 超参数 =========
-BATCH_SIZE = 64
-EPOCHS = 5
+BATCH_SIZE = 128
+EPOCHS = 20
 LEARNING_RATE = 1e-3
 NUM_CLASSES = 7
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", DEVICE)
+print("CUDA available:", torch.cuda.is_available())
 
 
 # ========= 3. 数据预处理 =========
@@ -61,27 +63,42 @@ print("测试集大小:", len(test_dataset))
 
 
 # ========= 5. 一个很小的 CNN，当作 student baseline =========
-class SmallCNN(nn.Module):
+class MediumCNN(nn.Module):
     def __init__(self, num_classes=7):
         super().__init__()
 
         self.features = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),   # [B,1,48,48] -> [B,32,48,48]
+            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.MaxPool2d(2),                              # -> [B,32,24,24]
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(2),   # 48 -> 24
 
-            nn.Conv2d(32, 64, kernel_size=3, padding=1), # -> [B,64,24,24]
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2),                              # -> [B,64,12,12]
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(2),   # 24 -> 12
 
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),# -> [B,128,12,12]
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.MaxPool2d(2)                               # -> [B,128,6,6]
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.MaxPool2d(2),   # 12 -> 6
         )
 
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(128 * 6 * 6, 256),
+            nn.Linear(128 * 6 * 6, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 256),
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(256, num_classes)
@@ -91,13 +108,6 @@ class SmallCNN(nn.Module):
         x = self.features(x)
         x = self.classifier(x)
         return x
-
-
-model = SmallCNN(num_classes=NUM_CLASSES).to(DEVICE)
-
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
 
 # ========= 6. 训练函数 =========
 def train_one_epoch(model, loader, criterion, optimizer, device):
