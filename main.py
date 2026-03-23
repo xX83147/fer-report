@@ -1,5 +1,7 @@
 import os
 import random
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,6 +10,8 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
+
+# ========= 0. 固定随机种子 =========
 seed = 42
 random.seed(seed)
 np.random.seed(seed)
@@ -15,13 +19,11 @@ torch.manual_seed(seed)
 torch.cuda.manual_seed_all(seed)
 
 
-
 # ========= 1. 路径 =========
-from pathlib import Path
-
 BASE_DIR = Path(__file__).resolve().parent
 TRAIN_DIR = BASE_DIR / "data" / "train"
 TEST_DIR = BASE_DIR / "data" / "test"
+
 
 # ========= 2. 超参数 =========
 BATCH_SIZE = 128
@@ -29,15 +31,17 @@ EPOCHS = 20
 LEARNING_RATE = 1e-3
 NUM_CLASSES = 7
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 print("Using device:", DEVICE)
 print("CUDA available:", torch.cuda.is_available())
 
 
 # ========= 3. 数据预处理 =========
 train_transform = transforms.Compose([
-    transforms.Grayscale(num_output_channels=1),   # 保证单通道
+    transforms.Grayscale(num_output_channels=1),
     transforms.Resize((48, 48)),
     transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.5], std=[0.5])
 ])
@@ -62,7 +66,7 @@ print("训练集大小:", len(train_dataset))
 print("测试集大小:", len(test_dataset))
 
 
-# ========= 5. 一个很小的 CNN，当作 student baseline =========
+# ========= 5. CNN 模型 =========
 class MediumCNN(nn.Module):
     def __init__(self, num_classes=7):
         super().__init__()
@@ -108,11 +112,16 @@ class MediumCNN(nn.Module):
         x = self.features(x)
         x = self.classifier(x)
         return x
+
+
+# ========= 6. 实例化模型、损失函数、优化器、调度器 =========
 model = MediumCNN(num_classes=NUM_CLASSES).to(DEVICE)
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
 
-# ========= 6. 训练函数 =========
+
+# ========= 7. 训练函数 =========
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
 
@@ -147,7 +156,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     return epoch_loss, epoch_acc
 
 
-# ========= 7. 测试函数 =========
+# ========= 8. 测试函数 =========
 def evaluate(model, loader, criterion, device):
     model.eval()
 
@@ -174,8 +183,10 @@ def evaluate(model, loader, criterion, device):
     return epoch_loss, epoch_acc
 
 
-# ========= 8. 开始训练 =========
+# ========= 9. 开始训练（含 early stopping） =========
 best_acc = 0.0
+patience = 5
+no_improve = 0
 
 for epoch in range(EPOCHS):
     train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, DEVICE)
@@ -185,9 +196,21 @@ for epoch in range(EPOCHS):
     print(f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
     print(f"Test  Loss: {test_loss:.4f} | Test  Acc: {test_acc:.4f}")
 
+    scheduler.step()
+    current_lr = optimizer.param_groups[0]["lr"]
+    print(f"Current LR: {current_lr:.6f}")
+
     if test_acc > best_acc:
         best_acc = test_acc
+        no_improve = 0
         torch.save(model.state_dict(), "best_model.pth")
         print("已保存最佳模型到 best_model.pth")
+    else:
+        no_improve += 1
+        print(f"验证集连续 {no_improve} 轮没有提升")
+
+    if no_improve >= patience:
+        print("Early stopping triggered.")
+        break
 
 print("训练完成，最佳测试准确率:", best_acc)
